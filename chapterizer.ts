@@ -168,6 +168,15 @@ if (!Deno.args[0] || !Deno.args[1] ) {
   console.log("usage: deno run --allow-read --allow-run --allow-write chapterize.ts <source dir> <destination dir>")
   Deno.exit(1);
 }
+
+// test that destDir exists, if it doesn't make it so
+try {
+  await Deno.stat(Deno.args[1]);
+} catch (e) {
+  // make the directory since it doesn't exist
+  await Deno.mkdir(Deno.args[1]);  
+}
+
 const sourceDir = Deno.realPathSync(Deno.args[0]);
 const destDir: string = Deno.realPathSync(Deno.args[1]);
 
