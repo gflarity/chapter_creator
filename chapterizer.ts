@@ -3,8 +3,6 @@ import { walk } from "https://deno.land/std@0.177.0/fs/walk.ts";
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
 import * as fs from "https://deno.land/std@0.178.0/fs/mod.ts"
 
-const file = "Mkv\ Sample.mkv";
-
 class KeyFrame {
   pts_time: number;
   pkt_pos: number;
@@ -242,3 +240,4 @@ for await (
     console.error(e);
   }
 }
+
