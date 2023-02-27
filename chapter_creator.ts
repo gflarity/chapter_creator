@@ -1,7 +1,8 @@
 import { StringReader } from "https://deno.land/std@0.178.0/io/string_reader.ts";
+import { walk, } from "https://deno.land/std@0.177.0/fs/walk.ts";
+import * as path from "https://deno.land/std@0.170.0/path/mod.ts"
 
 const file = "Mkv\ Sample.mkv"
-
 
 class KeyFrame {
   best_effort_timestamp: number;
@@ -104,6 +105,7 @@ class KeyFrameCollector {
       if (matches![2] === "1") {
         this.keyFrames.push(new KeyFrame(matches![1]))
         //console.error(this.keyFrames[this.keyFrames.length - 1])
+        console.log(".")
       }
       // remove the frame regardless of contents
       this.stringBuffer = this.stringBuffer.replace(this.frameRegEx, "")
@@ -150,7 +152,7 @@ async function chapterize(inFile: string, outFile: string) {
     cmd: ["ffmpeg", "-i", inFile, "-i", "-", "-map_chapters", "1", "-codec", "copy", outFile], 
     stdin: "piped",
     stdout: "null", 
-    stderr: "inherit"})
+    stderr: "null"})
   
 
   chapterizeProcess.stdin.write(new TextEncoder().encode(keyFrameCollection.generateChapterMetadata()))
@@ -161,5 +163,23 @@ async function chapterize(inFile: string, outFile: string) {
   }
 }
 
-await chapterize("./small.mkv", "small.out.mkv")
+
+if (!Deno.args[0] || !Deno.args[1] ) {
+  console.log("usage: deno run --allow-read --allow-run --allow-write chapterize.ts <source dir> <destination dir>")
+  Deno.exit(1);
+}
+const sourceDir = Deno.realPathSync(Deno.args[0]);
+const destDir: string = Deno.realPathSync(Deno.args[1]);
+
+console.log(`source: ${sourceDir} destination: ${destDir}`)
+Deno.mkdir(destDir, {recursive:true})
+
+// recursively walk through a directory looking for .mkv and .mp4 files
+for await (const entry of walk(sourceDir, { match: [new RegExp("(mp4|mkv)$", "i")] })) {
+  const sourcePath =  entry.path;
+  const destPath = sourcePath.replace(sourceDir, destDir);
+  console.log(`${sourcePath}->${destPath}`);
+  await chapterize(sourcePath, destPath);
+}
+
 
