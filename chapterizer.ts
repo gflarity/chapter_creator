@@ -3,6 +3,11 @@ import { walk } from "https://deno.land/std@0.177.0/fs/walk.ts";
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
 import * as fs from "https://deno.land/std@0.178.0/fs/mod.ts"
 
+// Configuration can bet set as environment variables or using .env file:
+import "https://deno.land/std@0.178.0/dotenv/load.ts"
+
+const chapterLength = parseInt(Deno.env.get("CHAPTER_LENGTH") || "180");
+
 class KeyFrame {
   pts_time: number;
   pkt_pos: number;
@@ -128,12 +133,12 @@ class KeyFrameCollector {
     this.reject(reason);
   }
 
-  // return frames from keyFrames every 180 seconds (3 minutes)
+  // return frames from keyFrames every chapterLength seconds (3 minutes)
   filterFrames(): KeyFrame[] {
     const filteredFrames: KeyFrame[] = [];
     let lastFrame: KeyFrame = this.keyFrames[0];
     for (const frame of this.keyFrames) {
-      if (frame.pts_time - lastFrame.pts_time > 180) {
+      if (frame.pts_time - lastFrame.pts_time > chapterLength) {
         filteredFrames.push(frame);
         lastFrame = frame;
       }
