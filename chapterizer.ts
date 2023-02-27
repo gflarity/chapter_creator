@@ -5,17 +5,17 @@ import * as path from "https://deno.land/std@0.170.0/path/mod.ts"
 const file = "Mkv\ Sample.mkv"
 
 class KeyFrame {
-  best_effort_timestamp: number;
+  pts_time: number;
   pkt_pos: number;
 
-  static frameRegEX = /.*best_effort_timestamp=(\d+).*pkt_pos=(\d+).*/su;
+  static frameRegEX = /.*pts_time=(\d+).*pkt_pos=(\d+).*/su;
 
   constructor(frameData: string) {
     const matches = frameData.match(KeyFrame.frameRegEX)
     if (!matches || matches.length < 3) {
       throw new Error("couldn't parse framedata")
     }
-    this.best_effort_timestamp = parseInt(matches[1]);
+    this.pts_time = parseInt(matches[1]);
     this.pkt_pos = parseInt(matches[2]);
   }
 }
@@ -55,15 +55,15 @@ class KeyFrameCollection {
     for (const frame of this.keyFrames) {
       if (!lastFrame) {
         chapterString += `[CHAPTER]\n`
-        chapterString += `TIMEBASE=1/1000\n`
+        chapterString += `TIMEBASE=1/1\n`
         chapterString += `START=0\n`
-        chapterString += `END=${frame.best_effort_timestamp}\n`
+        chapterString += `END=${frame.pts_time}\n`
         chapterString += `title=Chapter 1\n`
       } else {
         chapterString += `[CHAPTER]\n`
-        chapterString += `TIMEBASE=1/1000\n`
-        chapterString += `START=${lastFrame.best_effort_timestamp}\n`
-        chapterString += `END=${frame.best_effort_timestamp}\n`
+        chapterString += `TIMEBASE=1/1\n`
+        chapterString += `START=${lastFrame.pts_time}\n`
+        chapterString += `END=${frame.pts_time}\n`
         chapterString += `title=Chapter ${this.keyFrames.indexOf(frame) + 1}\n`
       }
       lastFrame = frame;
@@ -126,12 +126,12 @@ class KeyFrameCollector {
     this.reject(reason)
   }
 
-  // return frames from keyFrames every 180000 milliseconds (best_effort_timestamp)
+  // return frames from keyFrames every 180 seconds (3 minutes)
   filterFrames(): KeyFrame[] {
     const filteredFrames: KeyFrame[] = [];
     let lastFrame: KeyFrame = this.keyFrames[0];
     for (const frame of this.keyFrames) {
-      if (frame.best_effort_timestamp - lastFrame.best_effort_timestamp > 180000) {
+      if (frame.pts_time - lastFrame.pts_time > 180) {
         filteredFrames.push(frame)
         lastFrame = frame;
       }
@@ -145,7 +145,7 @@ async function chapterize(inFile: string, outFile: string) {
   const kfStream = new WritableStream(keyFrameCollector)
   
   console.log(`Calculating chapters for ${inFile}`)
-  const keyframeProcess = Deno.run({cmd: ["ffprobe", "-select_streams",  "v", "-show_frames", inFile], stdout: "piped", stderr: "null"})
+  const keyframeProcess = Deno.run({cmd: ["ffprobe", "-select_streams",  "v", "-show_frames", "-skip_frame", "nokey", inFile], stdout: "piped", stderr: "null"})
   keyframeProcess.stdout?.readable.pipeTo(kfStream)
   const keyFrameCollection = await keyFrameCollector.processingDone();
 
