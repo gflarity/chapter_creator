@@ -84,6 +84,7 @@ class KeyFrameCollector {
   private completionPromise: Promise<KeyFrameCollection>;
   private resolve!: (KeyFrameCollection: KeyFrameCollection) => void;
   private reject!: (reason: Error) => void;  
+  private encoder = new TextEncoder();
 
   constructor() {
     const self = this;
@@ -105,7 +106,7 @@ class KeyFrameCollector {
       if (matches![2] === "1") {
         this.keyFrames.push(new KeyFrame(matches![1]))
         //console.error(this.keyFrames[this.keyFrames.length - 1])
-        console.log(".")
+        Deno.stdout.write(this.encoder.encode("."))
       }
       // remove the frame regardless of contents
       this.stringBuffer = this.stringBuffer.replace(this.frameRegEx, "")
