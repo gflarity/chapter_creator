@@ -1,6 +1,7 @@
 import { StringReader } from "https://deno.land/std@0.178.0/io/string_reader.ts";
 import { walk } from "https://deno.land/std@0.177.0/fs/walk.ts";
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
+import * as fs from "https://deno.land/std@0.178.0/fs/mod.ts"
 
 const file = "Mkv\ Sample.mkv";
 
@@ -222,6 +223,13 @@ for await (
 ) {
   const sourcePath = entry.path;
   const destPath = sourcePath.replace(sourceDir, destDir);
+
+  // if the destination file already exists, just skip this source file
+  // notee that fs.exists is deprecated, but it just uses Deno.stat which is the alternative I'd use anyways...
+  if (await fs.exists(destPath)) {
+    continue;
+  }
+
   try {
     // there might be sub directories in the destPath, so we need to make sure we create them...
     const baseDir = path.dirname(destPath);
