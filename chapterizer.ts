@@ -122,6 +122,7 @@ class KeyFrameCollector {
   }
 
   close() {
+    Deno.stdout.write(this.encoder.encode("\n"));  
     this.resolve(new KeyFrameCollection(this.filterFrames()));
   }
 
@@ -227,6 +228,7 @@ for await (
   // if the destination file already exists, just skip this source file
   // notee that fs.exists is deprecated, but it just uses Deno.stat which is the alternative I'd use anyways...
   if (await fs.exists(destPath)) {
+    console.log(`${destPath} exists, skipping...`)
     continue;
   }
 
