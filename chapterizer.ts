@@ -160,7 +160,7 @@ async function chapterize(inFile: string, outFile: string) {
   chapterizeProcess.stdin.close();
   const promiseStatus = await chapterizeProcess.status();
   if (!promiseStatus.success) {
-    const output = await chapterizeProcess.output();
+    const output = await chapterizeProcess.stderrOutput();
     throw new Error("could not write chapters, here's the stderr: \n" + new TextDecoder().decode(output));
   }
 }
