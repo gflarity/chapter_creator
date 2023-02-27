@@ -153,14 +153,15 @@ async function chapterize(inFile: string, outFile: string) {
     cmd: ["ffmpeg", "-i", inFile, "-i", "-", "-map_chapters", "1", "-codec", "copy", outFile], 
     stdin: "piped",
     stdout: "null", 
-    stderr: "null"})
+    stderr: "piped"})
   
 
   chapterizeProcess.stdin.write(new TextEncoder().encode(keyFrameCollection.generateChapterMetadata()))
   chapterizeProcess.stdin.close();
   const promiseStatus = await chapterizeProcess.status();
   if (!promiseStatus.success) {
-    throw new Error("could not write chapters");
+    const output = await chapterizeProcess.output();
+    throw new Error("could not write chapters, here's the stderr: \n" + new TextDecoder().decode(output));
   }
 }
 
