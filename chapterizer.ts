@@ -189,8 +189,11 @@ Deno.mkdir(destDir, {recursive:true})
 for await (const entry of walk(sourceDir, { match: [new RegExp("(mp4|mkv)$", "i")] })) {
   const sourcePath =  entry.path;
   const destPath = sourcePath.replace(sourceDir, destDir);
-  console.log(`${sourcePath}->${destPath}`);
   try {
+    // there might be sub directories in the destPath, so we need to make sure we create them...
+    const baseDir = path.dirname(destPath);
+    await Deno.mkdir(baseDir, {recursive: true});
+    console.log(`${sourcePath}->${destPath}`);
     await chapterize(sourcePath, destPath);    
   } catch (e) {
     console.error(e);    
