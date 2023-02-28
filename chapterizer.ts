@@ -186,22 +186,28 @@ async function chapterize(inFile: string, outFile: string) {
     stderr: "piped",
   });
 
+  let stderr = "";
+  chapterizeProcess.stderr.readable.pipeTo(new WritableStream({
+    write(chunk: Uint8Array) {
+      stderr += new TextDecoder().decode(chunk);
+    }
+  }));
+
   chapterizeProcess.stdin.write(
-    new TextEncoder().encode(keyFrameCollection.generateChapterMetadata()),
-  );
+    new TextEncoder().encode(keyFrameCollection.generateChapterMetadata())
+  );  
   chapterizeProcess.stdin.close();
+
+  // wait for processing to complete, throw error if there was an issue
   const promiseStatus = await chapterizeProcess.status();
   if (!promiseStatus.success) {
     const output = await chapterizeProcess.stderrOutput();
-    throw new Error(
-      "could not write chapters, here's the stderr: \n" +
-        new TextDecoder().decode(output),
-    );
+    throw new Error("could not write chapters, here's the stderr: \n" + stderr);
   }
 
   // update the file atime/mtime to match the old file
   const fileInfo = await Deno.stat(inFile);
-  Deno.utime(outFile, fileInfo.atime as Date, fileInfo.mtime as Date);
+  await Deno.utime(outFile, fileInfo.atime as Date, fileInfo.mtime as Date);  
 }
 
 if (!Deno.args[0] || !Deno.args[1]) {
