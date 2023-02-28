@@ -198,6 +198,10 @@ async function chapterize(inFile: string, outFile: string) {
         new TextDecoder().decode(output),
     );
   }
+
+  // update the file atime/mtime to match the old file
+  const fileInfo = await Deno.stat(inFile);
+  Deno.utime(outFile, fileInfo.atime as Date, fileInfo.mtime as Date);
 }
 
 if (!Deno.args[0] || !Deno.args[1]) {
