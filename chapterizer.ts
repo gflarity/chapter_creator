@@ -3,6 +3,9 @@ import { walk } from "https://deno.land/std@0.177.0/fs/walk.ts";
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
 import * as fs from "https://deno.land/std@0.178.0/fs/mod.ts"
 
+import { EasySink } from "./easy_streams.ts";
+import { Deferred } from "https://deno.land/x/deferred@v1.0.1/mod.ts";
+
 // Configuration can bet set as environment variables or using .env file:
 import "https://deno.land/std@0.178.0/dotenv/load.ts"
 
@@ -12,10 +15,10 @@ class KeyFrame {
   pts_time: number;
   pkt_pos: number;
 
-  static frameRegEX = /.*pts_time=(\d+).*pkt_pos=(\d+).*/su;
+  public static frameRegEx = /.*pts_time=(\d+).*pkt_pos=(\d+).*/su;
 
   constructor(frameData: string) {
-    const matches = frameData.match(KeyFrame.frameRegEX);
+    const matches = frameData.match(KeyFrame.frameRegEx);
     if (!matches || matches.length < 3) {
       throw new Error("couldn't parse framedata");
     }
@@ -76,81 +79,36 @@ class KeyFrameCollection {
   }
 }
 
-type KFPromiseResolve = (keyFrames: KeyFrameCollection) => void;
-type KFPromiseReject = (reason: Error) => void;
-
-class KeyFrameCollector {
-  private stringBuffer = "";
-  private textDecoder = new TextDecoder();
-  private textEncoder = new TextEncoder();
-  private frameRegEx = /\[FRAME\](.*key_frame=(\d).*)\[\/FRAME\]/su;
-  private keyFrames: KeyFrame[] = [];
-  private completionPromise: Promise<KeyFrameCollection>;
-  private resolve!: (KeyFrameCollection: KeyFrameCollection) => void;
-  private reject!: (reason: Error) => void;
-  private encoder = new TextEncoder();
-
-  constructor() {
-    const self = this;
-    this.completionPromise = new Promise(
-      (resolve: KFPromiseResolve, reject: KFPromiseReject) => {
-        self.resolve = resolve;
-        self.reject = reject;
-      },
-    );
-  }
-  start(controller: WritableStreamDefaultController) {
-    const self = this;
-  }
-
-  write(chunk: Uint8Array, controller: WritableStreamDefaultController) {
-    this.stringBuffer += this.textDecoder.decode(chunk);
+async function chapterize(inFile: string, outFile: string) {
+  const keyFrameCollector = new EasySink();
+  let stringBuffer = "";
+  const textDecoder = new TextDecoder();
+  const frameRegEx = /\[FRAME\](.*key_frame=(\d).*)\[\/FRAME\]/su;
+  const textEncoder = new TextEncoder();
+  const keyFrames: KeyFrame[] = [];
+  const deferredKeyFrameCollection = new Deferred<KeyFrameCollection>();  
+  keyFrameCollector.onWrite((chunk, controller) => {
+    stringBuffer += textDecoder.decode(chunk);
 
     let matches: RegExpMatchArray | null;
-    while ((matches = this.stringBuffer.match(this.frameRegEx))?.length === 3) {
+    while ((matches = stringBuffer.match(frameRegEx))?.length === 3) {
       // pass on the key frames
       if (matches![2] === "1") {
-        this.keyFrames.push(new KeyFrame(matches![1]));
+        keyFrames.push(new KeyFrame(matches![1]));
         //console.error(this.keyFrames[this.keyFrames.length - 1])
-        Deno.stdout.write(this.encoder.encode("."));
+        Deno.stdout.write(textEncoder.encode("."));
       }
       // remove the frame regardless of contents
-      this.stringBuffer = this.stringBuffer.replace(this.frameRegEx, "");
+      stringBuffer = stringBuffer.replace(frameRegEx, "");
     }
-  }
-
-  // returns a promise that is resolved when the frames have been processes
-  async processingDone(): Promise<KeyFrameCollection> {
-    return this.completionPromise;
-  }
-
-  close() {
-    Deno.stdout.write(this.encoder.encode("\n"));  
-    this.resolve(new KeyFrameCollection(this.filterFrames()));
-  }
-
-  abort(reason: Error) {
-    this.reject(reason);
-  }
-
-  // return frames from keyFrames every chapterLength seconds (3 minutes)
-  filterFrames(): KeyFrame[] {
-    const filteredFrames: KeyFrame[] = [];
-    let lastFrame: KeyFrame = this.keyFrames[0];
-    for (const frame of this.keyFrames) {
-      if (frame.pts_time - lastFrame.pts_time > chapterLength) {
-        filteredFrames.push(frame);
-        lastFrame = frame;
-      }
-    }
-    return filteredFrames;
-  }
-}
-
-async function chapterize(inFile: string, outFile: string) {
-  const keyFrameCollector = new KeyFrameCollector();
-  const kfStream = new WritableStream(keyFrameCollector);
-
+  })
+  keyFrameCollector.onClose(() => {
+    deferredKeyFrameCollection.resolve(new KeyFrameCollection(keyFrames))
+  });
+  keyFrameCollector.onAbort((reason) => {
+    deferredKeyFrameCollection.reject(reason)
+  })
+  
   console.log(`Calculating chapters for ${inFile}`);
   const keyframeProcess = Deno.run({
     cmd: [
@@ -165,8 +123,9 @@ async function chapterize(inFile: string, outFile: string) {
     stdout: "piped",
     stderr: "null",
   });
-  keyframeProcess.stdout?.readable.pipeTo(kfStream);
-  const keyFrameCollection = await keyFrameCollector.processingDone();
+
+  keyframeProcess.stdout?.readable.pipeTo(keyFrameCollector.asWritableStream());
+  const keyFrameCollection = await deferredKeyFrameCollection;
 
   const chapterizeProcess = Deno.run({
     cmd: [
