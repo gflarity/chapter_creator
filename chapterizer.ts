@@ -56,7 +56,7 @@ async function chapterize(inFile: string, outFile: string) {
         if (matches![2] === "1") {
           controller.enqueue(new KeyFrame(matches![1]))
           //console.error(this.keyFrames[this.keyFrames.length - 1])
-          //Deno.stdout.write(new TextEncoder().encode("."));
+          Deno.stdout.write(new TextEncoder().encode("."));
         }
         // remove the frame regardless of contents
         stringBuffer = stringBuffer.replace(frameRegEx, "");
