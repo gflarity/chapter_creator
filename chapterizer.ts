@@ -172,6 +172,9 @@ async function chapterize(inFile: string, outFile: string) {
     }
   })); 
 
+  // if we don't await this the process will become defunct, should probably check it and print stderr too
+  await keyframeProcess.status();
+
   // wait for processing to complete, throw error if there was an issue
   const promiseStatus = await chapterizeProcess.status();
   if (!promiseStatus.success) {
