@@ -56,7 +56,7 @@ async function chapterize(inFile: string, outFile: string) {
         if (matches![2] === "1") {
           controller.enqueue(new KeyFrame(matches![1]))
           //console.error(this.keyFrames[this.keyFrames.length - 1])
-          Deno.stdout.write(new TextEncoder().encode("."));
+          //Deno.stdout.write(new TextEncoder().encode("."));
         }
         // remove the frame regardless of contents
         stringBuffer = stringBuffer.replace(frameRegEx, "");
@@ -69,15 +69,23 @@ async function chapterize(inFile: string, outFile: string) {
   })
 
   /// this transform filters out keyframes as we only want a few to represent the chapter starts
-  let lastFrame: KeyFrame;
+  let lastFrameFiltered: KeyFrame;
+  let lastFrameEncountered: KeyFrame;
   const keyFrameFilter = new TransformStream({
     transform(frame: KeyFrame, controller) {
-      if (!lastFrame) {
-        lastFrame = frame;
+      if (!lastFrameFiltered) {
         controller.enqueue(frame);
-      } else if (frame.pts_time - lastFrame.pts_time > chapterLength) {
+        lastFrameFiltered = frame;
+      } else if ((frame.pts_time - lastFrameFiltered.pts_time) > chapterLength) {
         controller.enqueue(frame);
-        lastFrame = frame;
+        lastFrameFiltered = frame;
+      }
+      lastFrameEncountered = frame;
+    },
+    flush(controller) {
+      // include the last frame encountered if there was a chapter at the end that is short
+      if (lastFrameFiltered !== lastFrameEncountered) {
+        controller.enqueue(lastFrameEncountered)
       }
     }
   })
@@ -105,6 +113,7 @@ async function chapterize(inFile: string, outFile: string) {
     title=Chapter 3
     [CHAPTER]
   */
+  let firstFrame: KeyFrame;
   let lastChapterizedFrame: KeyFrame;
   let chapterizedCounter = 1; // starts a 1
   const chapterMetaDataTransform = new TransformStream({
@@ -113,13 +122,23 @@ async function chapterize(inFile: string, outFile: string) {
     },
     transform(frame: KeyFrame, controller) {
       let chunk = "";
-        if (!lastChapterizedFrame) {
+
+      // special case, we need the ending of the first chapter
+      // to write the chapter metadata...
+      if (!firstFrame) {
+        firstFrame = frame;
+        return;
+      } 
+      
+      // write the first chapter now that we have the ending
+      if (!lastChapterizedFrame) {
         chunk += `[CHAPTER]\n`;
         chunk += `TIMEBASE=1/1\n`;
         chunk += `START=0\n`;
         chunk += `END=${frame.pts_time}\n`;
         chunk += `title=Chapter 1\n`;
       } else {
+        // write all the other chapters
         chunk += `[CHAPTER]\n`;
         chunk += `TIMEBASE=1/1\n`;
         chunk += `START=${lastChapterizedFrame.pts_time}\n`;
