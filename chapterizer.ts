@@ -79,7 +79,9 @@ class KeyFrameCollection {
   }
 }
 
+
 async function chapterize(inFile: string, outFile: string) {
+
   const keyFrameCollector = new EasySink();
   let stringBuffer = "";
   const textDecoder = new TextDecoder();
@@ -103,7 +105,17 @@ async function chapterize(inFile: string, outFile: string) {
     }
   })
   keyFrameCollector.onClose(() => {
-    deferredKeyFrameCollection.resolve(new KeyFrameCollection(keyFrames))
+
+    const filteredFrames: KeyFrame[] = [];
+    let lastFrame: KeyFrame = keyFrames[0];
+    for (const frame of keyFrames) {
+      if (frame.pts_time - lastFrame.pts_time > chapterLength) {
+        filteredFrames.push(frame);
+        lastFrame = frame;
+      }
+    }
+    deferredKeyFrameCollection.resolve(new KeyFrameCollection(filteredFrames)     
+    )
   });
   keyFrameCollector.onAbort((reason) => {
     deferredKeyFrameCollection.reject(reason)
