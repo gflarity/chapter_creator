@@ -172,9 +172,8 @@ class ChapterMetaDataTransform extends TransformStream<KeyFrame, string> {
 
 async function chapterize(inFile: string, outFile: string) {
   console.log(`Calculating chapters for ${inFile}`);
-  const keyframeProcess = Deno.run({
-    cmd: [
-      "ffprobe",
+  const keyFrameCommand = new Deno.Command("ffprobe", {
+    args: [
       "-select_streams",
       "v",
       "-show_frames",
@@ -185,10 +184,10 @@ async function chapterize(inFile: string, outFile: string) {
     stdout: "piped",
     stderr: "null",
   });
+  const keyframeProcess = keyFrameCommand.spawn();
 
-  const chapterizeProcess = Deno.run({
-    cmd: [
-      "ffmpeg",
+  const chapterizeCommand = new Deno.Command("ffmpeg", {
+    args: [
       "-i",
       inFile,
       "-i",
@@ -203,37 +202,29 @@ async function chapterize(inFile: string, outFile: string) {
     stdout: "null",
     stderr: "piped",
   });
+  const chapterizeProcess = chapterizeCommand.spawn();
 
   // Take the output from key frame process and pipe it through various transforms until we get our new chapters
   // to pump into the chapterize process
-  keyframeProcess.stdout.readable
+  keyframeProcess.stdout
     .pipeThrough(new TextDecoderStream())
     .pipeThrough(new KeyFrameCollectorTransformStream())
     .pipeThrough(new KeyFrameFilterTransformStream())
     .pipeThrough(new ChapterMetaDataTransform())
     .pipeThrough(new TextEncoderStream())
-    .pipeTo(chapterizeProcess.stdin.writable);
-
-  // collect stderr of chapterizeProcess...
-  let stderr = "";
-  chapterizeProcess.stderr.readable.pipeTo(
-    new WritableStream({
-      write(chunk: Uint8Array) {
-        stderr += new TextDecoder().decode(chunk);
-      },
-    })
-  );
+    .pipeTo(chapterizeProcess.stdin);
 
   // if we don't await this the process will become defunct, should probably check it and print stderr too
-  await keyframeProcess.status();
+  await keyframeProcess.status;
 
   // wait for processing to complete, throw error if there was an issue
-  const promiseStatus = await chapterizeProcess.status();
+  const promiseStatus = await chapterizeProcess.status;
   if (!promiseStatus.success) {
-    const output = await chapterizeProcess.stderrOutput();
+    const decoder = new TextDecoder();
+    const output = await chapterizeProcess.output();
     throw new Error(
       "could not write chapters, here's the stderr: \n" +
-        chapterizeProcess.stderr
+        decoder.decode(output.stderr)
     );
   }
 
