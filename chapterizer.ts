@@ -1,12 +1,12 @@
 import { StringReader } from "https://deno.land/std@0.178.0/io/string_reader.ts";
 import { walk } from "https://deno.land/std@0.177.0/fs/walk.ts";
 import * as path from "https://deno.land/std@0.170.0/path/mod.ts";
-import * as fs from "https://deno.land/std@0.178.0/fs/mod.ts"
+import * as fs from "https://deno.land/std@0.178.0/fs/mod.ts";
 
 import { Deferred } from "https://deno.land/x/deferred@v1.0.1/mod.ts";
 
 // Configuration can bet set as environment variables or using .env file:
-import "https://deno.land/std@0.178.0/dotenv/load.ts"
+import "https://deno.land/std@0.178.0/dotenv/load.ts";
 
 const chapterLength = parseInt(Deno.env.get("CHAPTER_LENGTH") || "180");
 
@@ -27,70 +27,80 @@ class KeyFrame {
   }
 }
 
-async function chapterize(inFile: string, outFile: string) {
-
-  console.log(`Calculating chapters for ${inFile}`);
-  const keyframeProcess = Deno.run({
-    cmd: [
-      "ffprobe",
-      "-select_streams",
-      "v",
-      "-show_frames",
-      "-skip_frame",
-      "nokey",
-      inFile,
-    ],
-    stdout: "piped",
-    stderr: "null",
-  });
-
-  // This transform takes string stream from the command above and parses out keyframes
-  const frameRegEx = /\[FRAME\](.*key_frame=(\d).*)\[\/FRAME\]/su;
-  let stringBuffer = "";
-  const keyFrameCollector = new TransformStream({
-    transform(chunk: string, controller) {
-      stringBuffer += chunk;
-      let matches: RegExpMatchArray | null;
-      while ((matches = stringBuffer.match(frameRegEx))?.length === 3) {        
-        // pass on the key frames
-        if (matches![2] === "1") {
-          controller.enqueue(new KeyFrame(matches![1]))
-          //console.error(this.keyFrames[this.keyFrames.length - 1])
-          Deno.stdout.write(new TextEncoder().encode("."));
+// This transform takes string stream from the command above and parses out keyframes
+class KeyFrameCollectorTransformStream extends TransformStream<
+  string,
+  KeyFrame
+> {
+  private stringBuffer = "";
+  private static frameRegEx = /\[FRAME\](.*key_frame=(\d).*)\[\/FRAME\]/su;
+  constructor() {
+    super({
+      transform: (chunk: string, controller) => {
+        this.stringBuffer += chunk;
+        let matches: RegExpMatchArray | null;
+        while (
+          (matches = this.stringBuffer.match(
+            KeyFrameCollectorTransformStream.frameRegEx
+          ))?.length === 3
+        ) {
+          // pass on the key frames
+          if (matches![2] === "1") {
+            controller.enqueue(new KeyFrame(matches![1]));
+            //console.error(this.keyFrames[this.keyFrames.length - 1])
+            Deno.stdout.write(new TextEncoder().encode("."));
+          }
+          // remove the frame regardless of contents
+          this.stringBuffer = this.stringBuffer.replace(
+            KeyFrameCollectorTransformStream.frameRegEx,
+            ""
+          );
         }
-        // remove the frame regardless of contents
-        stringBuffer = stringBuffer.replace(frameRegEx, "");
-      }
-    },
-    flush(){
-      // new line to make the output prettier
-      Deno.stdout.write(new TextEncoder().encode("\n"));
-    }
-  })
+      },
+      flush() {
+        // new line to make the output prettier
+        Deno.stdout.write(new TextEncoder().encode("\n"));
+      },
+    });
+  }
+}
 
-  /// this transform filters out keyframes as we only want a few to represent the chapter starts
-  let lastFrameFiltered: KeyFrame;
-  let lastFrameEncountered: KeyFrame;
-  const keyFrameFilter = new TransformStream({
-    transform(frame: KeyFrame, controller) {
-      if (!lastFrameFiltered) {
-        controller.enqueue(frame);
-        lastFrameFiltered = frame;
-      } else if ((frame.pts_time - lastFrameFiltered.pts_time) > chapterLength) {
-        controller.enqueue(frame);
-        lastFrameFiltered = frame;
-      }
-      lastFrameEncountered = frame;
-    },
-    flush(controller) {
-      // include the last frame encountered if there was a chapter at the end that is short
-      if (lastFrameFiltered !== lastFrameEncountered) {
-        controller.enqueue(lastFrameEncountered)
-      }
-    }
-  })
+/// this transform filters out keyframes as we only want a few to represent the chapter starts
+class KeyFrameFilterTransformStream extends TransformStream<
+  KeyFrame,
+  KeyFrame
+> {
+  private lastFrameFiltered: KeyFrame | undefined;
+  private lastFrameEncountered: KeyFrame | undefined;
+  constructor() {
+    super({
+      transform: (frame, controller) => {
+        if (!this.lastFrameFiltered) {
+          controller.enqueue(frame);
+          this.lastFrameFiltered = frame;
+        } else if (
+          frame.pts_time - this.lastFrameFiltered.pts_time >
+          chapterLength
+        ) {
+          controller.enqueue(frame);
+          this.lastFrameFiltered = frame;
+        }
+        this.lastFrameEncountered = frame;
+      },
+      flush: (controller) => {
+        // include the last frame encountered if there was a chapter at the end that is short
+        if (
+          this.lastFrameFiltered !== this.lastFrameEncountered &&
+          this.lastFrameEncountered
+        ) {
+          controller.enqueue(this.lastFrameEncountered);
+        }
+      },
+    });
+  }
+}
 
-  /*
+/*
     Generate a chapter document/string transform that uses key frame start/end times. We can
     send this to the process below that will create the new video files;
 
@@ -113,46 +123,67 @@ async function chapterize(inFile: string, outFile: string) {
     title=Chapter 3
     [CHAPTER]
   */
-  let firstFrame: KeyFrame;
-  let lastChapterizedFrame: KeyFrame;
-  let chapterizedCounter = 1; // starts a 1
-  const chapterMetaDataTransform = new TransformStream({
-    start(controller) {
-      controller.enqueue(";FFMETADATA1\n");
-    },
-    transform(frame: KeyFrame, controller) {
-      let chunk = "";
+class ChapterMetaDataTransform extends TransformStream<KeyFrame, string> {
+  private firstFrame: KeyFrame | undefined;
+  private lastChapterizedFrame: KeyFrame | undefined;
+  private chapterizedCounter = 1; // starts at 1
 
-      // special case, we need the ending of the first chapter
-      // to write the chapter metadata...
-      if (!firstFrame) {
-        firstFrame = frame;
-        return;
-      } 
-      
-      // write the first chapter now that we have the ending
-      if (!lastChapterizedFrame) {
-        chunk += `[CHAPTER]\n`;
-        chunk += `TIMEBASE=1/1\n`;
-        chunk += `START=0\n`;
-        chunk += `END=${frame.pts_time}\n`;
-        chunk += `title=Chapter 1\n`;
-      } else {
-        // write all the other chapters
-        chunk += `[CHAPTER]\n`;
-        chunk += `TIMEBASE=1/1\n`;
-        chunk += `START=${lastChapterizedFrame.pts_time}\n`;
-        chunk += `END=${frame.pts_time}\n`;
-        chunk += `title=Chapter ${chapterizedCounter}\n`;
-      }
-      
-      // bump counter and enqueue 
-      chapterizedCounter++;
-      controller.enqueue(chunk)
+  constructor() {
+    super({
+      start: (controller) => {
+        controller.enqueue(";FFMETADATA1\n");
+      },
+      transform: (frame, controller) => {
+        let chunk = "";
 
-      // keep track of last frame chapterized
-      lastChapterizedFrame = frame;      
-    }
+        // special case, we need the ending of the first chapter
+        // to write the chapter metadata...
+        if (!this.firstFrame) {
+          this.firstFrame = frame;
+          return;
+        }
+
+        // write the first chapter now that we have the ending
+        if (!this.lastChapterizedFrame) {
+          chunk += `[CHAPTER]\n`;
+          chunk += `TIMEBASE=1/1\n`;
+          chunk += `START=0\n`;
+          chunk += `END=${frame.pts_time}\n`;
+          chunk += `title=Chapter 1\n`;
+        } else {
+          // write all the other chapters
+          chunk += `[CHAPTER]\n`;
+          chunk += `TIMEBASE=1/1\n`;
+          chunk += `START=${this.lastChapterizedFrame.pts_time}\n`;
+          chunk += `END=${frame.pts_time}\n`;
+          chunk += `title=Chapter ${this.chapterizedCounter}\n`;
+        }
+
+        // bump counter and enqueue
+        this.chapterizedCounter++;
+        controller.enqueue(chunk);
+
+        // keep track of last frame chapterized
+        this.lastChapterizedFrame = frame;
+      },
+    });
+  }
+}
+
+async function chapterize(inFile: string, outFile: string) {
+  console.log(`Calculating chapters for ${inFile}`);
+  const keyframeProcess = Deno.run({
+    cmd: [
+      "ffprobe",
+      "-select_streams",
+      "v",
+      "-show_frames",
+      "-skip_frame",
+      "nokey",
+      inFile,
+    ],
+    stdout: "piped",
+    stderr: "null",
   });
 
   const chapterizeProcess = Deno.run({
@@ -173,23 +204,25 @@ async function chapterize(inFile: string, outFile: string) {
     stderr: "piped",
   });
 
-    // get a transform stream with the filtered keyframes
-    // get a transform stream proving the keyframes
-    keyframeProcess.stdout.readable
-      .pipeThrough(new TextDecoderStream)
-      .pipeThrough(keyFrameCollector)
-      .pipeThrough(keyFrameFilter)
-      .pipeThrough(chapterMetaDataTransform)
-      .pipeThrough(new TextEncoderStream())
-      .pipeTo(chapterizeProcess.stdin.writable);
+  // Take the output from key frame process and pipe it through various transforms until we get our new chapters
+  // to pump into the chapterize process
+  keyframeProcess.stdout.readable
+    .pipeThrough(new TextDecoderStream())
+    .pipeThrough(new KeyFrameCollectorTransformStream())
+    .pipeThrough(new KeyFrameFilterTransformStream())
+    .pipeThrough(new ChapterMetaDataTransform())
+    .pipeThrough(new TextEncoderStream())
+    .pipeTo(chapterizeProcess.stdin.writable);
 
-    // collect stderr of chapterizeProcess...
-    let stderr = "";
-  chapterizeProcess.stderr.readable.pipeTo(new WritableStream({
-    write(chunk: Uint8Array) {
-      stderr += new TextDecoder().decode(chunk);
-    }
-  })); 
+  // collect stderr of chapterizeProcess...
+  let stderr = "";
+  chapterizeProcess.stderr.readable.pipeTo(
+    new WritableStream({
+      write(chunk: Uint8Array) {
+        stderr += new TextDecoder().decode(chunk);
+      },
+    })
+  );
 
   // if we don't await this the process will become defunct, should probably check it and print stderr too
   await keyframeProcess.status();
@@ -198,17 +231,20 @@ async function chapterize(inFile: string, outFile: string) {
   const promiseStatus = await chapterizeProcess.status();
   if (!promiseStatus.success) {
     const output = await chapterizeProcess.stderrOutput();
-    throw new Error("could not write chapters, here's the stderr: \n" + chapterizeProcess.stderr);
+    throw new Error(
+      "could not write chapters, here's the stderr: \n" +
+        chapterizeProcess.stderr
+    );
   }
 
   // update the file atime/mtime to match the old file
   const fileInfo = await Deno.stat(inFile);
-  await Deno.utime(outFile, fileInfo.atime as Date, fileInfo.mtime as Date);  
+  await Deno.utime(outFile, fileInfo.atime as Date, fileInfo.mtime as Date);
 }
 
 if (!Deno.args[0] || !Deno.args[1]) {
   console.log(
-    "usage: deno run --allow-read --allow-run --allow-write chapterize.ts <source dir> <destination dir>",
+    "usage: deno run --allow-read --allow-run --allow-write chapterize.ts <source dir> <destination dir>"
   );
   Deno.exit(1);
 }
@@ -228,16 +264,16 @@ console.log(`source: ${sourceDir} destination: ${destDir}`);
 Deno.mkdir(destDir, { recursive: true });
 
 // recursively walk through a directory looking for .mkv and .mp4 files
-for await (
-  const entry of walk(sourceDir, { match: [new RegExp("(mp4|mkv)$", "i")] })
-) {
+for await (const entry of walk(sourceDir, {
+  match: [new RegExp("(mp4|mkv)$", "i")],
+})) {
   const sourcePath = entry.path;
   const destPath = sourcePath.replace(sourceDir, destDir);
 
   // if the destination file already exists, just skip this source file
   // notee that fs.exists is deprecated, but it just uses Deno.stat which is the alternative I'd use anyways...
   if (await fs.exists(destPath)) {
-    console.log(`${destPath} exists, skipping...`)
+    console.log(`${destPath} exists, skipping...`);
     continue;
   }
 
@@ -251,4 +287,3 @@ for await (
     console.error(e);
   }
 }
-
