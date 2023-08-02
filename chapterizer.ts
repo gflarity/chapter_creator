@@ -6,7 +6,7 @@ import * as fs from "https://deno.land/std@0.178.0/fs/mod.ts";
 import { Deferred } from "https://deno.land/x/deferred@v1.0.1/mod.ts";
 
 // Configuration can bet set as environment variables or using .env file:
-import "https://deno.land/std@0.178.0/dotenv/load.ts";
+import "https://deno.land/std@0.196.0/dotenv/load.ts";
 
 const chapterLength = parseInt(Deno.env.get("CHAPTER_LENGTH") || "180");
 
