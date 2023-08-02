@@ -235,7 +235,7 @@ async function chapterize(inFile: string, outFile: string) {
 
 if (!Deno.args[0] || !Deno.args[1]) {
   console.log(
-    "usage: deno run --allow-read --allow-run --allow-write chapterize.ts <source dir> <destination dir>"
+    "usage: deno run --allow-read --allow-env --allow-run --allow-write chapterize.ts <source dir> <destination dir>"
   );
   Deno.exit(1);
 }
